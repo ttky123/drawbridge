@@ -56,16 +56,18 @@ test('native clients exchange strokes and screen frames over WebSocket',async()=
  }
 });
 
-test('eraser, clear, and background are synchronized',async()=>{
+test('board and screen layers erase and clear independently',async()=>{
  const server=createApp();await new Promise(r=>server.listen(0,'127.0.0.1',r));
  const base=`http://127.0.0.1:${server.address().port}`;
  const post=async(path,data)=>{const r=await fetch(base+'/api/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});return {status:r.status,data:await r.json()};};
  try{
   const {data:{code}}=await post('create',{});const {data:{id}}=await post('join',{code});
-  const stroke={id:'erase-me',points:[[.2,.2,.5],[.3,.3,.5]],color:'#253342',width:4};
-  assert.equal((await post('event',{code,id,event:{type:'stroke',stroke}})).status,200);
-  assert.equal((await post('event',{code,id,event:{type:'erase',point:[.21,.21],radius:.03}})).status,200);
+  const stroke={points:[[.2,.2,.5],[.3,.3,.5]],color:'#253342',width:4};
+  assert.equal((await post('event',{code,id,event:{type:'stroke',stroke:{...stroke,id:'board-stroke',layer:'board'}}})).status,200);
+  assert.equal((await post('event',{code,id,event:{type:'stroke',stroke:{...stroke,id:'screen-stroke',layer:'screen'}}})).status,200);
+  assert.equal((await post('event',{code,id,event:{type:'erase',layer:'screen',point:[.21,.21],radius:.03}})).status,200);
+  const {data:{id:viewer}}=await post('join',{code});const controller=new AbortController();const response=await fetch(`${base}/api/events?code=${code}&id=${viewer}`,{signal:controller.signal});const reader=response.body.getReader();const state=new TextDecoder().decode((await reader.read()).value);controller.abort();assert.ok(state.includes('board-stroke'));assert.ok(!state.includes('screen-stroke'));
   assert.equal((await post('event',{code,id,event:{type:'background',image:'data:image/png;base64,iVBORw0KGgo='}})).status,200);
-  assert.equal((await post('event',{code,id,event:{type:'clear'}})).status,200);
+  assert.equal((await post('event',{code,id,event:{type:'clear',layer:'board'}})).status,200);
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
 });

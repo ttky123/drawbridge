@@ -43,22 +43,22 @@ export function createApp() {
           if (!event || typeof event.type !== 'string') return json(400, {error:'잘못된 이벤트'});
           if (event.type === 'stroke') {
             const s = event.stroke;
-            if (!s || typeof s.id !== 'string' || !Array.isArray(s.points) || s.points.length > 4096 || !/^#[0-9a-f]{6}$/i.test(s.color) || !Number.isFinite(s.width) || s.width < 0.1 || s.width > 40 || (s.style && !['pen','marker','highlighter'].includes(s.style)) || !s.points.every(p => Array.isArray(p) && p.length === 3 && p.every(Number.isFinite) && p.every(v => v >= 0 && v <= 1))) return json(400, {error:'잘못된 필기 데이터'});
+            if (!s || typeof s.id !== 'string' || !Array.isArray(s.points) || s.points.length > 4096 || !/^#[0-9a-f]{6}$/i.test(s.color) || !Number.isFinite(s.width) || s.width < 0.1 || s.width > 40 || (s.style && !['pen','marker','highlighter'].includes(s.style)) || (s.layer && !['board','screen'].includes(s.layer)) || !s.points.every(p => Array.isArray(p) && p.length === 3 && p.every(Number.isFinite) && p.every(v => v >= 0 && v <= 1))) return json(400, {error:'잘못된 필기 데이터'});
             const key = `${body.id}:${s.id}`;
             if (!room.active.has(key) && room.strokes.length >= 5000) return json(409, {error:'필기가 가득 찼습니다. PNG로 저장한 뒤 지워 주세요.'});
-            if (!room.active.has(key)) { room.active.set(key, {...s, owner:body.id}); room.strokes.push(room.active.get(key)); }
+            if (!room.active.has(key)) { room.active.set(key, {...s, layer:s.layer || 'board', owner:body.id}); room.strokes.push(room.active.get(key)); }
             else Object.assign(room.active.get(key), s);
             broadcast(room, {type:'stroke', stroke:room.active.get(key)}, body.id);
           } else if (event.type === 'clear') {
-            room.strokes=[]; room.active.clear(); broadcast(room, {type:'state', strokes:[]});
+            const layer=['board','screen'].includes(event.layer)?event.layer:'board';room.strokes=room.strokes.filter(s=>(s.layer||'board')!==layer);room.active=new Map(room.strokes.map(s=>[`${s.owner}:${s.id}`,s]));broadcast(room, {type:'state', strokes:room.strokes});
           } else if (event.type === 'erase') {
-            const point=event.point, radius=event.radius;
+            const point=event.point, radius=event.radius,layer=['board','screen'].includes(event.layer)?event.layer:'board';
             if(!Array.isArray(point)||point.length!==2||!point.every(Number.isFinite)||!point.every(v=>v>=0&&v<=1)||!Number.isFinite(radius)||radius<0.001||radius>0.2) return json(400,{error:'잘못된 지우개 데이터'});
             const before=room.strokes.length;
-            room.strokes=room.strokes.filter(s=>!s.points.some(p=>Math.hypot(p[0]-point[0],p[1]-point[1])<=radius));
+            room.strokes=room.strokes.filter(s=>(s.layer||'board')!==layer||!s.points.some(p=>Math.hypot(p[0]-point[0],p[1]-point[1])<=radius));
             if(room.strokes.length!==before){room.active=new Map(room.strokes.map(s=>[`${s.owner}:${s.id}`,s]));broadcast(room,{type:'state',strokes:room.strokes});}
           } else if(event.type === 'undo') {
-            const index = room.strokes.findLastIndex(s => s.owner === body.id);
+            const layer=['board','screen'].includes(event.layer)?event.layer:'board';const index = room.strokes.findLastIndex(s => s.owner === body.id && (s.layer||'board')===layer);
             if(index >= 0) { const [s] = room.strokes.splice(index,1); room.active.delete(`${s.owner}:${s.id}`); broadcast(room, {type:'state', strokes:room.strokes}); }
           } else if (event.type === 'frame') {
             if(typeof event.image !== 'string' || event.image.length > 1400000 || !/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(event.image)) return json(400,{error:'잘못된 화면 데이터'});

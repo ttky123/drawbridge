@@ -11,16 +11,17 @@ final class InkStroke {
     let colorHex: String
     let width: CGFloat
     let style: String
+    let layer: String
     var points: [InkPoint]
-    init(id: String, owner: String? = nil, colorHex: String = "#253342", width: CGFloat = 4, style: String = "pen", points: [InkPoint] = []) {
-        self.id=id; self.owner=owner; self.colorHex=colorHex; self.width=width; self.style=style; self.points=points
+    init(id: String, owner: String? = nil, colorHex: String = "#253342", width: CGFloat = 4, style: String = "pen", layer: String = "board", points: [InkPoint] = []) {
+        self.id=id; self.owner=owner; self.colorHex=colorHex; self.width=width; self.style=style; self.layer=layer; self.points=points
         let scanner=Scanner(string:String(colorHex.dropFirst())); var rgb:UInt64=0; scanner.scanHexInt64(&rgb)
         color=NSColor(red:CGFloat((rgb>>16)&255)/255,green:CGFloat((rgb>>8)&255)/255,blue:CGFloat(rgb&255)/255,alpha:1)
     }
-    func json() -> [String:Any] { ["id":id,"color":colorHex,"width":width,"style":style,"points":points.map{[$0.x,$0.y,$0.pressure]}] }
+    func json() -> [String:Any] { ["id":id,"color":colorHex,"width":width,"style":style,"layer":layer,"points":points.map{[$0.x,$0.y,$0.pressure]}] }
     static func parse(_ value:[String:Any]) -> InkStroke? {
         guard let id=value["id"] as? String,let hex=value["color"] as? String,let width=value["width"] as? NSNumber,let raw=value["points"] as? [[NSNumber]] else{return nil}
-        return InkStroke(id:id,owner:value["owner"] as? String,colorHex:hex,width:CGFloat(truncating:width),style:value["style"] as? String ?? "pen",points:raw.compactMap{$0.count==3 ? InkPoint(x:CGFloat(truncating:$0[0]),y:CGFloat(truncating:$0[1]),pressure:CGFloat(truncating:$0[2])):nil})
+        return InkStroke(id:id,owner:value["owner"] as? String,colorHex:hex,width:CGFloat(truncating:width),style:value["style"] as? String ?? "pen",layer:value["layer"] as? String ?? "board",points:raw.compactMap{$0.count==3 ? InkPoint(x:CGFloat(truncating:$0[0]),y:CGFloat(truncating:$0[1]),pressure:CGFloat(truncating:$0[2])):nil})
     }
 }
 
@@ -29,6 +30,7 @@ final class CanvasView:NSView {
     var backgroundImage:NSImage? { didSet { needsDisplay=true } }
     var eraserMode=false
     var overlayMode=false { didSet { needsDisplay=true } }
+    var activeLayer="board" { didSet { needsDisplay=true } }
     var currentColorHex="#253342",currentWidth:CGFloat=4,currentStyle="pen"
     var zoom:CGFloat=1 { didSet { needsDisplay=true } }
     var send:(([String:Any])->Void)?
@@ -41,7 +43,7 @@ final class CanvasView:NSView {
             let scale=min(bounds.width/image.size.width,bounds.height/image.size.height),size=NSSize(width:image.size.width*scale,height:image.size.height*scale)
             image.draw(in:NSRect(x:(bounds.width-size.width)/2,y:(bounds.height-size.height)/2,width:size.width,height:size.height),from:.zero,operation:.sourceOver,fraction:1)
         }
-        for stroke in strokes {
+        for stroke in strokes where stroke.layer == activeLayer {
             let alpha:CGFloat=stroke.style == "highlighter" ? 0.3:1;stroke.color.withAlphaComponent(alpha).setStroke();stroke.color.withAlphaComponent(alpha).setFill()
             guard let first=stroke.points.first else{continue}
             if stroke.points.count==1 { let d=stroke.width;NSBezierPath(ovalIn:NSRect(x:first.x*bounds.width-d/2,y:first.y*bounds.height-d/2,width:d,height:d)).fill();continue }
@@ -49,14 +51,14 @@ final class CanvasView:NSView {
         }
         NSGraphicsContext.restoreGraphicsState()
     }
-    override func mouseDown(with event:NSEvent){if eraserMode{erase(event);return};let s=InkStroke(id:UUID().uuidString,colorHex:currentColorHex,width:currentWidth,style:currentStyle);current=s;strokes.append(s);append(event)}
+    override func mouseDown(with event:NSEvent){if eraserMode{erase(event);return};let s=InkStroke(id:UUID().uuidString,colorHex:currentColorHex,width:currentWidth,style:currentStyle,layer:activeLayer);current=s;strokes.append(s);append(event)}
     override func mouseDragged(with event:NSEvent){if eraserMode{erase(event)}else{append(event)}}
     override func mouseUp(with event:NSEvent){if eraserMode{erase(event);return};append(event);publish();current=nil}
     override func magnify(with event:NSEvent){zoom=max(0.5,min(4,zoom*(1+event.magnification)))}
     private func normalized(_ event:NSEvent)->NSPoint{let p=convert(event.locationInWindow,from:nil);return NSPoint(x:((p.x-bounds.midX)/zoom+bounds.midX)/bounds.width,y:((p.y-bounds.midY)/zoom+bounds.midY)/bounds.height)}
     private func append(_ event:NSEvent){guard let s=current else{return};let p=normalized(event);s.points.append(InkPoint(x:max(0,min(1,p.x)),y:max(0,min(1,p.y)),pressure:event.pressure>0 ? CGFloat(event.pressure):0.5));needsDisplay=true;publish()}
     private func publish(){guard let s=current else{return};send?(["type":"stroke","stroke":s.json()])}
-    private func erase(_ event:NSEvent){let p=normalized(event);send?(["type":"erase","point":[max(0,min(1,p.x)),max(0,min(1,p.y))],"radius":0.025/zoom])}
+    private func erase(_ event:NSEvent){let p=normalized(event);send?(["type":"erase","layer":activeLayer,"point":[max(0,min(1,p.x)),max(0,min(1,p.y))],"radius":0.025/zoom])}
 }
 
 final class AppController:NSObject,NSApplicationDelegate {
@@ -140,22 +142,22 @@ final class AppController:NSObject,NSApplicationDelegate {
     }
     @objc func usePen(){canvas.eraserMode=false;status.stringValue="펜 모드"}
     @objc func useEraser(){canvas.eraserMode=true;status.stringValue="선 지우개 모드"}
-    @objc func undo(){guard socket != nil else{status.stringValue="먼저 보드에 연결하세요";return};send(["type":"undo"]);status.stringValue="마지막 필기 되돌림"}
+    @objc func undo(){guard socket != nil else{status.stringValue="먼저 세션에 연결하세요";return};send(["type":"undo","layer":canvas.activeLayer]);status.stringValue=canvas.activeLayer == "screen" ? "화면 주석 되돌림":"보드 필기 되돌림"}
     @objc func changeColor(_ sender:NSColorWell){let color=sender.color.usingColorSpace(.deviceRGB) ?? sender.color;canvas.currentColorHex=String(format:"#%02X%02X%02X",Int(color.redComponent*255),Int(color.greenComponent*255),Int(color.blueComponent*255));usePen()}
     @objc func changeStyle(_ sender:NSPopUpButton){canvas.currentStyle=["pen","marker","highlighter"][sender.indexOfSelectedItem];usePen()}
     @objc func changeWidth(_ sender:NSSlider){canvas.currentWidth=CGFloat(sender.doubleValue);status.stringValue="굵기 \(Int(sender.doubleValue))"}
     @objc func zoomIn(){canvas.zoom=min(4,canvas.zoom*1.25);status.stringValue="확대 \(Int(canvas.zoom*100))%"}
     @objc func zoomOut(){canvas.zoom=max(0.5,canvas.zoom/1.25);status.stringValue="확대 \(Int(canvas.zoom*100))%"}
     @objc func zoomReset(){canvas.zoom=1;status.stringValue="확대 100%"}
-    @objc func clearInk(){let alert=NSAlert();alert.messageText="모든 필기를 지울까요?";alert.addButton(withTitle:"지우기");alert.addButton(withTitle:"취소");if alert.runModal() == .alertFirstButtonReturn{send(["type":"clear"])}}
+    @objc func clearInk(){let name=canvas.activeLayer == "screen" ? "화면 주석":"보드 필기";let alert=NSAlert();alert.messageText="\(name)을 모두 지울까요?";alert.addButton(withTitle:"지우기");alert.addButton(withTitle:"취소");if alert.runModal() == .alertFirstButtonReturn{send(["type":"clear","layer":canvas.activeLayer])}}
     @objc func importImage(){let panel=NSOpenPanel();panel.allowedContentTypes=[.png,.jpeg,.heic];guard panel.runModal() == .OK,let url=panel.url,let image=NSImage(contentsOf:url)else{return};let maxSize=NSSize(width:1600,height:1000),scale=min(1,min(maxSize.width/image.size.width,maxSize.height/image.size.height)),size=NSSize(width:image.size.width*scale,height:image.size.height*scale);let target=NSImage(size:size);target.lockFocus();image.draw(in:NSRect(origin:.zero,size:size));target.unlockFocus();guard let tiff=target.tiffRepresentation,let rep=NSBitmapImageRep(data:tiff),let data=rep.representation(using:.jpeg,properties:[.compressionFactor:0.85])else{return};canvas.backgroundImage=target;send(["type":"background","image":"data:image/jpeg;base64,"+data.base64EncodedString()]);status.stringValue="배경 이미지 추가됨"}
     func setBackground(_ value:String){guard let comma=value.firstIndex(of:","),let data=Data(base64Encoded:String(value[value.index(after:comma)...])),let image=NSImage(data:data)else{return};canvas.backgroundImage=image}
-    @objc func toggleOverlay(){if canvas.overlayMode{canvas.overlayMode=false;window.level = .normal;window.isOpaque=true;window.backgroundColor = .windowBackgroundColor;window.setFrame(normalFrame,display:true);status.stringValue="화이트보드 모드"}else{normalFrame=window.frame;canvas.overlayMode=true;canvas.backgroundImage=nil;window.isOpaque=false;window.backgroundColor = .clear;window.level = .floating;if let screen=window.screen{window.setFrame(screen.visibleFrame,display:true)};status.stringValue="화면 위 필기 · 내보내기로 화면과 합성"}}
+    @objc func toggleOverlay(){if canvas.overlayMode{canvas.overlayMode=false;canvas.activeLayer="board";window.level = .normal;window.isOpaque=true;window.backgroundColor = .windowBackgroundColor;window.setFrame(normalFrame,display:true);status.stringValue="보드 필기 모드"}else{normalFrame=window.frame;canvas.overlayMode=true;canvas.activeLayer="screen";window.isOpaque=false;window.backgroundColor = .clear;window.level = .floating;if let screen=window.screen{window.setFrame(screen.visibleFrame,display:true)};status.stringValue="화면 주석 모드 · 보드 필기와 별도 저장"}}
     @objc func saveImage(){let panel=NSSavePanel();panel.allowedContentTypes=[.png,.jpeg];panel.nameFieldStringValue="drawbridge.png";guard panel.runModal() == .OK,let url=panel.url else{return};if canvas.overlayMode{captureOverlay(to:url)}else{let rep=canvas.bitmapImageRepForCachingDisplay(in:canvas.bounds)!;canvas.cacheDisplay(in:canvas.bounds,to:rep);write(rep,to:url)}}
     func captureOverlay(to url:URL){Task{do{let content=try await SCShareableContent.excludingDesktopWindows(false,onScreenWindowsOnly:true);guard let display=content.displays.first else{throw NSError(domain:"Drawbridge",code:1,userInfo:[NSLocalizedDescriptionKey:"화면을 찾지 못했습니다"])};let ownApps=content.applications.filter{$0.bundleIdentifier == Bundle.main.bundleIdentifier};let filter=SCContentFilter(display:display,excludingApplications:ownApps,exceptingWindows:[]);let config=SCStreamConfiguration();config.width=Int(display.width);config.height=Int(display.height);config.showsCursor=false;let shot=try await SCScreenshotManager.captureImage(contentFilter:filter,configuration:config);await MainActor.run{let ink=self.canvas.bitmapImageRepForCachingDisplay(in:self.canvas.bounds)!;self.canvas.cacheDisplay(in:self.canvas.bounds,to:ink);let composite=NSImage(size:self.canvas.bounds.size);composite.lockFocus();NSImage(cgImage:shot,size:self.canvas.bounds.size).draw(in:self.canvas.bounds);let layer=NSImage(size:self.canvas.bounds.size);layer.addRepresentation(ink);layer.draw(in:self.canvas.bounds);composite.unlockFocus();if let data=composite.tiffRepresentation,let rep=NSBitmapImageRep(data:data){self.write(rep,to:url)}}}catch{await MainActor.run{self.status.stringValue="화면 기록 권한이 필요합니다: \(error.localizedDescription)"}}}}
     func write(_ rep:NSBitmapImageRep,to url:URL){let type:NSBitmapImageRep.FileType=url.pathExtension.lowercased()=="jpg"||url.pathExtension.lowercased()=="jpeg" ? .jpeg:.png;let properties:[NSBitmapImageRep.PropertyKey:Any]=type == .jpeg ? [.compressionFactor:0.9]:[:];do{try rep.representation(using:type,properties:properties)?.write(to:url);status.stringValue="이미지 저장 완료"}catch{status.stringValue=error.localizedDescription}}
     @objc func toggleScreenShare(){if screenTimer != nil{screenTimer?.invalidate();screenTimer=nil;hideAnnotationOverlay();shareButton.title="화면 공유";send(["type":"share-stop"]);status.stringValue="화면 공유 중지";return};guard socket != nil else{status.stringValue="먼저 세션에 연결하세요";return};showAnnotationOverlay();shareButton.title="공유 중지";status.stringValue="Mac 화면을 태블릿으로 전송 중 · 모바일 필기를 화면에 표시";captureAndSendFrame();screenTimer=Timer.scheduledTimer(withTimeInterval:0.5,repeats:true){[weak self] _ in self?.captureAndSendFrame()}}
-    func showAnnotationOverlay(){guard annotationWindow == nil,let screen=window.screen ?? NSScreen.main else{return};let overlay=NSWindow(contentRect:screen.frame,styleMask:[.borderless],backing:.buffered,defer:false,screen:screen);overlay.isOpaque=false;overlay.backgroundColor = .clear;overlay.hasShadow=false;overlay.level = .floating;overlay.ignoresMouseEvents=true;overlay.collectionBehavior=[.canJoinAllSpaces,.fullScreenAuxiliary,.stationary];let view=CanvasView(frame:NSRect(origin:.zero,size:screen.frame.size));view.overlayMode=true;view.strokes=canvas.strokes;overlay.contentView=view;overlay.orderFrontRegardless();annotationWindow=overlay;annotationCanvas=view}
+    func showAnnotationOverlay(){guard annotationWindow == nil,let screen=window.screen ?? NSScreen.main else{return};let overlay=NSWindow(contentRect:screen.frame,styleMask:[.borderless],backing:.buffered,defer:false,screen:screen);overlay.isOpaque=false;overlay.backgroundColor = .clear;overlay.hasShadow=false;overlay.level = .floating;overlay.ignoresMouseEvents=true;overlay.collectionBehavior=[.canJoinAllSpaces,.fullScreenAuxiliary,.stationary];let view=CanvasView(frame:NSRect(origin:.zero,size:screen.frame.size));view.overlayMode=true;view.activeLayer="screen";view.strokes=canvas.strokes;overlay.contentView=view;overlay.orderFrontRegardless();annotationWindow=overlay;annotationCanvas=view}
     func hideAnnotationOverlay(){annotationWindow?.orderOut(nil);annotationWindow=nil;annotationCanvas=nil}
     func syncAnnotationOverlay(){annotationCanvas?.strokes=canvas.strokes;annotationCanvas?.needsDisplay=true}
     func captureAndSendFrame(){guard !captureBusy else{return};captureBusy=true;Task{defer{Task{@MainActor in self.captureBusy=false}};do{let content=try await SCShareableContent.excludingDesktopWindows(false,onScreenWindowsOnly:true);guard let display=content.displays.first else{return};let ownApps=content.applications.filter{$0.bundleIdentifier == Bundle.main.bundleIdentifier};let filter=SCContentFilter(display:display,excludingApplications:ownApps,exceptingWindows:[]);let config=SCStreamConfiguration();let scale=min(1.0,1280.0/CGFloat(display.width));config.width=Int(CGFloat(display.width)*scale);config.height=Int(CGFloat(display.height)*scale);config.showsCursor=true;let shot=try await SCScreenshotManager.captureImage(contentFilter:filter,configuration:config);let rep=NSBitmapImageRep(cgImage:shot);if let data=rep.representation(using:.jpeg,properties:[.compressionFactor:0.62]){self.send(["type":"frame","image":"data:image/jpeg;base64,"+data.base64EncodedString()])}}catch{await MainActor.run{self.status.stringValue="화면 기록 권한이 필요합니다: \(error.localizedDescription)";self.screenTimer?.invalidate();self.screenTimer=nil;self.hideAnnotationOverlay();self.shareButton.title="화면 공유"}}}}
