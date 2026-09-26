@@ -1,5 +1,5 @@
 # Drawbridge
-맥북과 Lenovo Android 펜 태블릿을 연결하는 네이티브 실시간 화이트보드입니다. macOS 앱과 Android 앱이 WebSocket 서버를 통해 필기와 필압을 공유하며, 양쪽 앱에서 필기를 벡터 PDF로 저장할 수 있습니다.
+맥북과 Android 펜 태블릿을 연결하는 네이티브 실시간 화이트보드입니다. macOS 앱과 Android 앱이 WebSocket 서버를 통해 필기와 필압을 공유하며, 양쪽 앱에서 필기를 벡터 PDF로 저장할 수 있습니다.
 
 ## 현재 맥에서 USB 연동 테스트
 ```sh
