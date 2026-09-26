@@ -25,40 +25,39 @@ public class MainActivity extends Activity {
     private EditText serverField, codeField;
     private TextView status;
     private DrawView board;
+    private LinearLayout rootLayout, topBar;
+    private HorizontalScrollView toolScroll;
     private WebSocket socket;
     private String clientId, roomCode;
     private static final int SAVE_PDF = 7, PICK_IMAGE = 8, SAVE_IMAGE = 9;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(20,16,20,16); root.setBackgroundColor(Color.rgb(246,247,249));
-        LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL);
+        rootLayout = new LinearLayout(this); rootLayout.setOrientation(LinearLayout.VERTICAL); rootLayout.setPadding(20,16,20,16); rootLayout.setBackgroundColor(Color.rgb(246,247,249));
+        topBar = new LinearLayout(this); topBar.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = new TextView(this); title.setText("Drawbridge  ·  ANDROID PEN"); title.setTextSize(20); title.setTextColor(Color.rgb(37,51,66)); title.setTypeface(null,1);
         serverField = field("http://127.0.0.1:3000"); codeField = field(""); codeField.setHint("6자리 코드");
-        Button create=button("새 보드"), join=button("연결");
+        Button connection=button("연결 설정");
         status = new TextView(this); status.setText("연결 준비"); status.setPadding(14,0,8,0);
-        bar.addView(title,new LinearLayout.LayoutParams(270,55)); bar.addView(serverField,new LinearLayout.LayoutParams(320,55)); bar.addView(codeField,new LinearLayout.LayoutParams(180,55)); bar.addView(create); bar.addView(join); bar.addView(status);
+        topBar.addView(title,new LinearLayout.LayoutParams(0,55,1));topBar.addView(connection);topBar.addView(status);
         LinearLayout tools=new LinearLayout(this);tools.setGravity(Gravity.CENTER_VERTICAL);
-        Button undo=button("되돌리기"),pen=button("펜"),marker=button("마커"),highlighter=button("형광펜"),eraser=button("지우개"),black=button("검정"),red=button("빨강"),blue=button("파랑"),green=button("초록"),thin=button("가늘게"),thick=button("굵게"),zoomOut=button("축소"),zoomReset=button("100%"),zoomIn=button("확대"),clear=button("전체 지우기"),image=button("이미지"),overlay=button("화면 위 필기"),saveImage=button("PNG 저장"),pdf=button("PDF 저장");
-        tools.addView(undo);tools.addView(pen);tools.addView(marker);tools.addView(highlighter);tools.addView(eraser);tools.addView(black);tools.addView(red);tools.addView(blue);tools.addView(green);tools.addView(thin);tools.addView(thick);tools.addView(zoomOut);tools.addView(zoomReset);tools.addView(zoomIn);tools.addView(clear);tools.addView(image);tools.addView(overlay);tools.addView(saveImage);tools.addView(pdf);
-        HorizontalScrollView toolScroll=new HorizontalScrollView(this);toolScroll.addView(tools,new HorizontalScrollView.LayoutParams(-2,-2));
-        HorizontalScrollView connectionScroll=new HorizontalScrollView(this);connectionScroll.addView(bar,new HorizontalScrollView.LayoutParams(-2,-2));
-        board = new DrawView(); root.addView(connectionScroll);root.addView(toolScroll); root.addView(board,new LinearLayout.LayoutParams(-1,0,1)); setContentView(root);
-        create.setOnClickListener(v -> createRoom()); join.setOnClickListener(v -> joinRoom(codeField.getText().toString().trim()));
-        undo.setOnClickListener(v->undo());pen.setOnClickListener(v->{board.eraserMode=false;board.currentStyle="pen";status.setText("펜 모드");});marker.setOnClickListener(v->{board.eraserMode=false;board.currentStyle="marker";status.setText("마커 모드");});highlighter.setOnClickListener(v->{board.eraserMode=false;board.currentStyle="highlighter";status.setText("형광펜 모드");});eraser.setOnClickListener(v->{board.eraserMode=true;status.setText("선 지우개 모드");});
-        black.setOnClickListener(v->board.currentColor=Color.rgb(37,51,66));red.setOnClickListener(v->board.currentColor=Color.rgb(225,70,70));blue.setOnClickListener(v->board.currentColor=Color.rgb(60,100,225));green.setOnClickListener(v->board.currentColor=Color.rgb(45,155,115));
-        thin.setOnClickListener(v->{board.currentWidth=Math.max(1,board.currentWidth-1);status.setText("굵기 "+(int)board.currentWidth);});thick.setOnClickListener(v->{board.currentWidth=Math.min(16,board.currentWidth+1);status.setText("굵기 "+(int)board.currentWidth);});
+        Button undo=button("↶ 되돌리기"),tool=button("펜 ▾"),color=button("색상 ▾"),width=button("굵기 4"),zoomOut=button("−"),zoomReset=button("100%"),zoomIn=button("+"),more=button("더보기 ▾");
+        tools.addView(undo);tools.addView(tool);tools.addView(color);tools.addView(width);tools.addView(zoomOut);tools.addView(zoomReset);tools.addView(zoomIn);tools.addView(more);
+        toolScroll=new HorizontalScrollView(this);toolScroll.addView(tools,new HorizontalScrollView.LayoutParams(-2,-2));
+        board = new DrawView(); rootLayout.addView(topBar);rootLayout.addView(toolScroll);rootLayout.addView(board,new LinearLayout.LayoutParams(-1,0,1));setContentView(rootLayout);
+        connection.setOnClickListener(v->showConnectionDialog());undo.setOnClickListener(v->undo());tool.setOnClickListener(v->showToolDialog(tool));color.setOnClickListener(v->showColorDialog());width.setOnClickListener(v->showWidthDialog(width));more.setOnClickListener(v->showMoreDialog());
         zoomOut.setOnClickListener(v->{board.zoom=Math.max(.5f,board.zoom/1.25f);board.invalidate();status.setText("확대 "+(int)(board.zoom*100)+"%");});zoomReset.setOnClickListener(v->{board.zoom=1;board.invalidate();status.setText("확대 100%");});zoomIn.setOnClickListener(v->{board.zoom=Math.min(4,board.zoom*1.25f);board.invalidate();status.setText("확대 "+(int)(board.zoom*100)+"%");});
-        clear.setOnClickListener(v->new android.app.AlertDialog.Builder(this).setMessage("모든 필기를 지울까요?").setPositiveButton("지우기",(d,w)->sendSimple("clear")).setNegativeButton("취소",null).show());
-        image.setOnClickListener(v->startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE),PICK_IMAGE));
-        overlay.setOnClickListener(v->{board.overlayMode=!board.overlayMode;bar.setVisibility(board.overlayMode?View.GONE:View.VISIBLE);root.setBackgroundColor(board.overlayMode?Color.TRANSPARENT:Color.rgb(246,247,249));board.setBackgroundColor(board.overlayMode?Color.TRANSPARENT:Color.WHITE);overlay.setText(board.overlayMode?"보드로 돌아가기":"화면 위 필기");board.invalidate();});
-        saveImage.setOnClickListener(v->startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("image/png").putExtra(Intent.EXTRA_TITLE,"drawbridge.png"),SAVE_IMAGE));
-        pdf.setOnClickListener(v -> { Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/pdf").putExtra(Intent.EXTRA_TITLE,"drawbridge.pdf"); startActivityForResult(i,SAVE_PDF); });
         handleInvite(getIntent());
     }
 
     private EditText field(String value){ EditText e=new EditText(this);e.setText(value);e.setSingleLine();e.setTextSize(13);return e; }
     private Button button(String text){ Button b=new Button(this);b.setText(text);return b; }
+    private void showConnectionDialog(){LinearLayout fields=new LinearLayout(this);fields.setOrientation(LinearLayout.VERTICAL);fields.setPadding(36,8,36,0);EditText address=field(serverField.getText().toString()),room=field(codeField.getText().toString());address.setHint("Mac 앱에 표시된 서버 주소");room.setHint("6자리 참여 코드");fields.addView(address);fields.addView(room);new android.app.AlertDialog.Builder(this).setTitle("세션 참여").setMessage("Mac에서 초대 QR을 스캔하는 방법을 권장합니다. 직접 연결할 때만 아래 항목을 입력하세요.").setView(fields).setPositiveButton("참여",(d,w)->{serverField.setText(address.getText());codeField.setText(room.getText());joinRoom(room.getText().toString().trim());}).setNegativeButton("취소",null).show();}
+    private void showToolDialog(Button button){String[] items={"펜","마커","형광펜","지우개"};new android.app.AlertDialog.Builder(this).setTitle("필기 도구").setSingleChoiceItems(items,board.eraserMode?3:board.currentStyle.equals("marker")?1:board.currentStyle.equals("highlighter")?2:0,(d,which)->{board.eraserMode=which==3;if(which<3)board.currentStyle=new String[]{"pen","marker","highlighter"}[which];button.setText(items[which]+" ▾");status.setText(items[which]+" 모드");d.dismiss();}).show();}
+    private void showColorDialog(){String[] items={"검정","빨강","파랑","초록"};int[] colors={Color.rgb(37,51,66),Color.rgb(225,70,70),Color.rgb(60,100,225),Color.rgb(45,155,115)};new android.app.AlertDialog.Builder(this).setTitle("펜 색상").setItems(items,(d,which)->{board.currentColor=colors[which];status.setText(items[which]+" 선택");}).show();}
+    private void showWidthDialog(Button button){SeekBar slider=new SeekBar(this);slider.setMax(15);slider.setProgress((int)board.currentWidth-1);slider.setPadding(40,20,40,20);new android.app.AlertDialog.Builder(this).setTitle("펜 굵기").setView(slider).setPositiveButton("적용",(d,w)->{board.currentWidth=slider.getProgress()+1;button.setText("굵기 "+(int)board.currentWidth);}).setNegativeButton("취소",null).show();}
+    private void showMoreDialog(){String[] items={"전체 지우기","이미지 추가","화면 위 필기","PNG 저장","PDF 저장"};new android.app.AlertDialog.Builder(this).setTitle("보드 작업").setItems(items,(d,which)->{if(which==0)new android.app.AlertDialog.Builder(this).setMessage("모든 필기를 지울까요?").setPositiveButton("지우기",(x,w)->sendSimple("clear")).setNegativeButton("취소",null).show();else if(which==1)startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("image/*").addCategory(Intent.CATEGORY_OPENABLE),PICK_IMAGE);else if(which==2)toggleOverlay();else if(which==3)startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("image/png").putExtra(Intent.EXTRA_TITLE,"drawbridge.png"),SAVE_IMAGE);else{Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/pdf").putExtra(Intent.EXTRA_TITLE,"drawbridge.pdf");startActivityForResult(i,SAVE_PDF);}}).show();}
+    private void toggleOverlay(){board.overlayMode=!board.overlayMode;topBar.setVisibility(board.overlayMode?View.GONE:View.VISIBLE);toolScroll.setVisibility(board.overlayMode?View.GONE:View.VISIBLE);rootLayout.setBackgroundColor(board.overlayMode?Color.TRANSPARENT:Color.rgb(246,247,249));board.setBackgroundColor(board.overlayMode?Color.TRANSPARENT:Color.WHITE);board.invalidate();}
     private String base(){ return serverField.getText().toString().trim().replaceAll("/$",""); }
     private void createRoom(){ io.execute(() -> { try { JSONObject r=post("/api/create",new JSONObject()); runOnUiThread(()->{codeField.setText(r.optString("code"));joinRoom(r.optString("code"));}); } catch(Exception e){showError(e);} }); }
     private void joinRoom(String code){ if(!code.matches("\\d{6}")){status.setText("코드를 확인하세요");return;} io.execute(() -> { try { JSONObject r=post("/api/join",new JSONObject().put("code",code));clientId=r.getString("id");roomCode=code;connectSocket(); } catch(Exception e){showError(e);} }); }

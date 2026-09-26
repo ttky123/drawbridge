@@ -25,5 +25,5 @@ ditto "$ROOT/dist/Drawbridge.app" "$DEST"
 codesign --verify --deep --strict "$DEST"
 
 echo "설치 완료: $DEST"
-echo "Drawbridge에서 '외부 연결'을 누르면 서버와 임시 HTTPS 터널이 자동으로 시작됩니다."
+echo "Drawbridge의 '연결 설정'에서 외부 세션 또는 같은 Wi-Fi 세션을 시작할 수 있습니다."
 open "$DEST"
