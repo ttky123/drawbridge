@@ -21,6 +21,7 @@ cd "$ROOT"
 npm ci
 ./scripts/build-macos.sh
 mkdir -p "$HOME/Applications"
+pkill -x Drawbridge >/dev/null 2>&1 || true
 ditto "$ROOT/dist/Drawbridge.app" "$DEST"
 codesign --verify --deep --strict "$DEST"
 
