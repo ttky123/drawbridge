@@ -39,6 +39,14 @@ Mac 앱의 **연결 설정**에서 연결 방식을 한 번에 선택합니다. 
 
 업무망 호환성을 위해 외부 터널은 QUIC 대신 HTTP/2를 사용합니다. 이 연결은 일반 웹 포트 443이 아니라 Cloudflare Tunnel의 **TCP 7844** outbound 연결이 필요합니다. 회사 방화벽이 TCP 7844를 차단하면 앱이 이를 감지해 상태 영역에 표시하며, 네트워크 관리자에게 `region1.v2.argotunnel.com`, `region2.v2.argotunnel.com`, `h2.cftunnel.com`의 TCP 7844 허용을 요청해야 합니다.
 
+업무 Mac에서 외부 세션이 계속 실패하면 다음 진단을 실행합니다.
+
+```sh
+./scripts/diagnose-network.sh
+```
+
+스크립트는 Node.js와 cloudflared 설치 여부, Cloudflare 도메인 DNS, TryCloudflare HTTPS 443, 터널 HTTP/2용 TCP 7844를 각각 확인합니다. TCP 7844가 모두 차단된 경우 Quick Tunnel은 사용할 수 없으므로 일반 HTTPS 443 공용 중계 서버가 필요합니다.
+
 Mac 화면은 연결 기능과 필기 기능을 두 줄로 분리했습니다. 위쪽에는 연결 설정·초대·화면 공유와 현재 상태만 표시하고, 아래쪽에는 되돌리기·필기 도구·색상·굵기·확대만 둡니다. 이미지, 화면 위 필기, PNG/JPG, PDF 기능은 **더보기** 메뉴에 있습니다. Android도 서버 주소와 코드를 **연결 설정** 모달로 옮기고 필기 도구·색상·굵기·파일 작업을 짧은 선택 메뉴로 묶었습니다.
 
 ## 필기와 콘텐츠
