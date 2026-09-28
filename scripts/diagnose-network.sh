@@ -1,6 +1,7 @@
 #!/bin/sh
 set -u
 
+ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 PASS=0
 FAIL=0
 
@@ -21,6 +22,20 @@ if command -v cloudflared >/dev/null 2>&1; then
   ok "cloudflared: $(cloudflared --version 2>/dev/null | head -1)"
 else
   bad "cloudflared가 설치되지 않았습니다."
+fi
+
+if command -v node >/dev/null 2>&1 && [ -f "$ROOT/server.js" ]; then
+  TEST_PORT=$((41000 + ($$ % 1000)))
+  PORT="$TEST_PORT" node "$ROOT/server.js" >"${TMPDIR:-/tmp}/drawbridge-diagnose-server.log" 2>&1 &
+  SERVER_PID=$!
+  sleep 1
+  if curl --connect-timeout 3 --max-time 5 -fsS "http://127.0.0.1:$TEST_PORT/api/network" >/dev/null 2>&1; then
+    ok "내장 서버: localhost:$TEST_PORT"
+  else
+    bad "내장 서버를 localhost에서 실행할 수 없습니다."
+  fi
+  kill "$SERVER_PID" >/dev/null 2>&1 || true
+  wait "$SERVER_PID" >/dev/null 2>&1 || true
 fi
 
 for HOST in api.trycloudflare.com region1.v2.argotunnel.com region2.v2.argotunnel.com; do
