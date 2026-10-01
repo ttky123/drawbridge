@@ -64,7 +64,7 @@ final class CanvasView:NSView {
 final class AppController:NSObject,NSApplicationDelegate {
     let window=NSWindow(contentRect:NSRect(x:0,y:0,width:1200,height:760),styleMask:[.titled,.closable,.resizable,.miniaturizable],backing:.buffered,defer:false)
     let server=NSTextField(string:"http://localhost:3000"),code=NSTextField(string:""),status=NSTextField(labelWithString:"연결 준비")
-    let canvas=CanvasView(),root=NSStackView(),bar=NSStackView(),toolBar=NSStackView();var socket:URLSessionWebSocketTask?;var clientId="";var roomCode="";var inviteBase:String?;var pendingTunnelURL:String?;var normalFrame=NSRect.zero;var screenTimer:Timer?;var captureBusy=false;var annotationWindow:NSWindow?;var annotationCanvas:CanvasView?;var relayProcess:Process?;var tunnelProcess:Process?;var tunnelOutput="";lazy var shareButton=button("화면 공유",#selector(toggleScreenShare));lazy var externalButton=button("외부 연결",#selector(toggleExternalRelay));lazy var connectionButton=button("연결 설정",#selector(showConnectionDialog))
+    let canvas=CanvasView(),root=NSStackView(),bar=NSStackView(),toolBar=NSStackView();var socket:URLSessionWebSocketTask?;var clientId="";var roomCode="";var inviteBase:String?;var pendingTunnelURL:String?;var tunnelVerificationStarted=false;var normalFrame=NSRect.zero;var screenTimer:Timer?;var captureBusy=false;var annotationWindow:NSWindow?;var annotationCanvas:CanvasView?;var relayProcess:Process?;var tunnelProcess:Process?;var tunnelOutput="";lazy var shareButton=button("화면 공유",#selector(toggleScreenShare));lazy var externalButton=button("외부 연결",#selector(toggleExternalRelay));lazy var connectionButton=button("연결 설정",#selector(showConnectionDialog))
     func applicationDidFinishLaunching(_ notification:Notification){
         window.title="Drawbridge";window.center();window.minSize=NSSize(width:820,height:520)
         root.orientation = .vertical;root.spacing=12;root.edgeInsets=NSEdgeInsets(top:16,left:18,bottom:18,right:18);window.contentView=root
@@ -102,20 +102,53 @@ final class AppController:NSObject,NSApplicationDelegate {
         guard let resources=Bundle.main.resourceURL,FileManager.default.fileExists(atPath:resources.appendingPathComponent("server.js").path)else{status.stringValue="앱에 중계 서버가 없습니다. 다시 설치하세요";return}
         guard let node=executable(["/opt/homebrew/bin/node","/usr/local/bin/node","/usr/bin/node"])else{status.stringValue="Node.js를 설치하세요";return}
         let port=Int.random(in:31000...39999),relay=Process();relay.executableURL=node;relay.arguments=[resources.appendingPathComponent("server.js").path];relay.currentDirectoryURL=resources;var environment=ProcessInfo.processInfo.environment;environment["PORT"]=String(port);relay.environment=environment;relay.standardOutput=FileHandle.nullDevice;relay.standardError=FileHandle.nullDevice
-        do{try relay.run()}catch{status.stringValue="내장 서버 실행 실패: \(error.localizedDescription)";return};relayProcess=relay;server.stringValue="http://localhost:\(port)";connectionButton.title="연결 관리";status.stringValue="같은 Wi-Fi 세션을 만드는 중";DispatchQueue.main.asyncAfter(deadline:.now()+0.6){self.createRoom()}
+        do{try relay.run()}catch{status.stringValue="내장 서버 실행 실패: \(error.localizedDescription)";return};relayProcess=relay;server.stringValue="http://localhost:\(port)";connectionButton.title="연결 관리";status.stringValue="같은 Wi-Fi 세션을 만드는 중";waitForRelayAndCreateRoom(attempts:30)
     }
     func startExternalRelay(){
         guard let resources=Bundle.main.resourceURL,FileManager.default.fileExists(atPath:resources.appendingPathComponent("server.js").path)else{status.stringValue="앱에 중계 서버가 없습니다. 다시 설치하세요";return}
         guard let node=executable(["/opt/homebrew/bin/node","/usr/local/bin/node","/usr/bin/node"]),let cloudflared=executable(["/opt/homebrew/bin/cloudflared","/usr/local/bin/cloudflared"])else{status.stringValue="Node.js와 cloudflared를 설치하세요";return}
         let port=Int.random(in:31000...39999),relay=Process();relay.executableURL=node;relay.arguments=[resources.appendingPathComponent("server.js").path];relay.currentDirectoryURL=resources;var environment=ProcessInfo.processInfo.environment;environment["PORT"]=String(port);relay.environment=environment;relay.standardOutput=FileHandle.nullDevice;relay.standardError=FileHandle.nullDevice
-        do{try relay.run()}catch{status.stringValue="내장 서버 실행 실패: \(error.localizedDescription)";return};relayProcess=relay;server.stringValue="http://127.0.0.1:\(port)";inviteBase=nil;pendingTunnelURL=nil
-        let tunnel=Process(),pipe=Pipe();tunnel.executableURL=cloudflared;tunnel.arguments=["tunnel","--protocol","http2","--url","http://127.0.0.1:\(port)","--no-autoupdate"];tunnel.standardOutput=pipe;tunnel.standardError=pipe;tunnelOutput="";pipe.fileHandleForReading.readabilityHandler={ [weak self] handle in guard let self else{return};let data=handle.availableData;guard !data.isEmpty,let chunk=String(data:data,encoding:.utf8)else{return};self.tunnelOutput+=chunk;if self.pendingTunnelURL == nil,let range=self.tunnelOutput.range(of:"https://[a-z0-9-]+\\.trycloudflare\\.com",options:.regularExpression){self.pendingTunnelURL=String(self.tunnelOutput[range]);DispatchQueue.main.async{self.status.stringValue="회사망 호환 모드로 연결 중 (TCP 7844)"}};guard self.tunnelOutput.contains("Registered tunnel connection"),let publicURL=self.pendingTunnelURL else{return};pipe.fileHandleForReading.readabilityHandler=nil;DispatchQueue.main.async{self.inviteBase=publicURL;self.externalButton.title="외부 중지";self.connectionButton.title="연결 관리";self.status.stringValue=self.roomCode.isEmpty ? "외부 초대 주소 준비됨":"● \(self.roomCode) 외부 세션 준비됨"}}
+        do{try relay.run()}catch{status.stringValue="내장 서버 실행 실패: \(error.localizedDescription)";return};relayProcess=relay;server.stringValue="http://127.0.0.1:\(port)";inviteBase=nil;pendingTunnelURL=nil;tunnelVerificationStarted=false
+        let tunnel=Process(),pipe=Pipe();tunnel.executableURL=cloudflared;tunnel.arguments=["tunnel","--protocol","http2","--url","http://127.0.0.1:\(port)","--no-autoupdate"];tunnel.standardOutput=pipe;tunnel.standardError=pipe;tunnelOutput="";pipe.fileHandleForReading.readabilityHandler={ [weak self] handle in guard let self else{return};let data=handle.availableData;guard !data.isEmpty,let chunk=String(data:data,encoding:.utf8)else{return};self.tunnelOutput+=chunk;if self.pendingTunnelURL == nil,let range=self.tunnelOutput.range(of:"https://[a-z0-9-]+\\.trycloudflare\\.com",options:.regularExpression){self.pendingTunnelURL=String(self.tunnelOutput[range]);DispatchQueue.main.async{self.status.stringValue="회사망 호환 모드로 연결 중 (TCP 7844)"}};guard self.tunnelOutput.contains("Registered tunnel connection"),let publicURL=self.pendingTunnelURL else{return};DispatchQueue.main.async{self.beginPublicTunnelVerification(publicURL)}}
         tunnel.terminationHandler={ [weak self] _ in DispatchQueue.main.async{guard let self,self.tunnelProcess != nil else{return};let output=self.tunnelOutput.lowercased();self.tunnelProcess=nil;self.inviteBase=nil;self.connectionButton.title="연결 설정";if output.contains("i/o timeout")||output.contains("unable to establish connection")||output.contains("dial tcp"){self.status.stringValue="회사망이 Cloudflare TCP 7844를 차단했습니다"}else if output.contains("no such host")||output.contains("dns lookup failed"){self.status.stringValue="회사망 DNS에서 Cloudflare 주소를 찾지 못했습니다"}else if output.contains("failed to request quick tunnel")||output.contains("api.trycloudflare.com")&&output.contains("error"){self.status.stringValue="회사망에서 TryCloudflare API 연결이 차단됐습니다"}else{self.status.stringValue="외부 터널 연결 실패 · 같은 Wi-Fi 모드는 사용 가능"}}}
-        do{try tunnel.run();tunnelProcess=tunnel;externalButton.title="준비 중…";connectionButton.title="준비 중…";status.stringValue="세션 생성 및 외부 주소 발급 중";DispatchQueue.main.asyncAfter(deadline:.now()+0.6){self.createRoom()}}catch{relay.terminate();relayProcess=nil;connectionButton.title="연결 설정";status.stringValue="터널 실행 실패: \(error.localizedDescription)"}
+        do{try tunnel.run();tunnelProcess=tunnel;externalButton.title="준비 중…";connectionButton.title="준비 중…";status.stringValue="내장 서버 확인 및 외부 주소 발급 중";waitForRelayAndCreateRoom(attempts:30)}catch{relay.terminate();relayProcess=nil;connectionButton.title="연결 설정";status.stringValue="터널 실행 실패: \(error.localizedDescription)"}
     }
-    func stopExternalRelay(){let tunnel=tunnelProcess,relay=relayProcess;tunnelProcess=nil;relayProcess=nil;inviteBase=nil;pendingTunnelURL=nil;tunnel?.terminate();relay?.terminate();socket?.cancel(with:.goingAway,reason:nil);socket=nil;clientId="";roomCode="";code.stringValue="";server.stringValue="http://localhost:3000";externalButton.title="외부 연결";connectionButton.title="연결 설정";status.stringValue="연결 준비"}
+    func stopExternalRelay(){let tunnel=tunnelProcess,relay=relayProcess;tunnelProcess=nil;relayProcess=nil;inviteBase=nil;pendingTunnelURL=nil;tunnelVerificationStarted=false;tunnel?.terminate();relay?.terminate();socket?.cancel(with:.goingAway,reason:nil);socket=nil;clientId="";roomCode="";code.stringValue="";server.stringValue="http://localhost:3000";externalButton.title="외부 연결";connectionButton.title="연결 설정";status.stringValue="연결 준비"}
     @objc func createRoom(){createRoom(retries:5)}
     func createRoom(retries:Int){post("/api/create",[:]){ [weak self] result in guard let self else{return};guard let c=result?["code"] as? String else{if retries>0{DispatchQueue.main.asyncAfter(deadline:.now()+0.6){self.createRoom(retries:retries-1)}}else{DispatchQueue.main.async{self.status.stringValue="내장 서버 연결 실패 · 앱을 다시 설치하거나 실행하세요"}};return};DispatchQueue.main.async{self.code.stringValue=c;self.join(c)}}}
+    func waitForRelayAndCreateRoom(attempts:Int){
+        guard relayProcess?.isRunning == true else{status.stringValue="내장 서버가 종료되었습니다 · 앱을 업데이트하세요";return}
+        guard let url=URL(string:base+"/api/network") else{return}
+        var request=URLRequest(url:url);request.timeoutInterval=1
+        URLSession.shared.dataTask(with:request){[weak self] data,response,_ in
+            guard let self else{return}
+            let ready=data != nil && (response as? HTTPURLResponse)?.statusCode == 200
+            DispatchQueue.main.async{
+                if ready{self.createRoom(retries:5)}
+                else if attempts>1{DispatchQueue.main.asyncAfter(deadline:.now()+0.5){self.waitForRelayAndCreateRoom(attempts:attempts-1)}}
+                else{self.status.stringValue="내장 서버 시작 시간 초과 · 진단 스크립트를 실행하세요"}
+            }
+        }.resume()
+    }
+    func beginPublicTunnelVerification(_ publicURL:String){
+        guard !tunnelVerificationStarted else{return};tunnelVerificationStarted=true
+        status.stringValue="외부 주소 실제 접속 확인 중"
+        verifyPublicTunnel(publicURL,attempts:90)
+    }
+    func verifyPublicTunnel(_ publicURL:String,attempts:Int){
+        guard tunnelProcess?.isRunning == true else{return}
+        guard let url=URL(string:publicURL+"/api/network") else{return}
+        var request=URLRequest(url:url);request.timeoutInterval=3
+        URLSession.shared.dataTask(with:request){[weak self] data,response,error in
+            guard let self else{return};let ready=data != nil && (response as? HTTPURLResponse)?.statusCode == 200
+            DispatchQueue.main.async{
+                guard self.tunnelProcess?.isRunning == true else{return}
+                if ready{self.inviteBase=publicURL;self.externalButton.title="외부 중지";self.connectionButton.title="연결 관리";self.status.stringValue=self.roomCode.isEmpty ? "외부 초대 주소 준비됨":"● \(self.roomCode) 외부 세션 준비됨"}
+                else if attempts>1{self.status.stringValue="외부 주소 DNS 전파 대기 중 · \(91-attempts)/90";DispatchQueue.main.asyncAfter(deadline:.now()+1){self.verifyPublicTunnel(publicURL,attempts:attempts-1)}}
+                else{self.status.stringValue="외부 주소 접속 실패 · 최신 진단을 실행하세요: \(error?.localizedDescription ?? "HTTP 응답 없음")"}
+            }
+        }.resume()
+    }
     @objc func joinRoom(){join(code.stringValue)}
     func join(_ room:String){guard room.range(of:"^[0-9]{6}$",options:.regularExpression) != nil else{status.stringValue="코드를 확인하세요";return};post("/api/join",["code":room]){[weak self] result in guard let self,let id=result?["id"] as? String else{return};self.clientId=id;self.roomCode=room;DispatchQueue.main.async{self.connect()}}}
     func post(_ path:String,_ body:[String:Any],completion:@escaping([String:Any]?)->Void){guard let url=URL(string:base+path)else{return};var request=URLRequest(url:url);request.httpMethod="POST";request.setValue("application/json",forHTTPHeaderField:"Content-Type");request.httpBody=try? JSONSerialization.data(withJSONObject:body);URLSession.shared.dataTask(with:request){[weak self] data,response,error in guard let data,let result=(try? JSONSerialization.jsonObject(with:data)) as? [String:Any] else{DispatchQueue.main.async{self?.status.stringValue=error?.localizedDescription ?? "서버 연결 실패"};completion(nil);return};if let e=result["error"] as? String{DispatchQueue.main.async{self?.status.stringValue=e};completion(nil)}else{completion(result)}}.resume()}

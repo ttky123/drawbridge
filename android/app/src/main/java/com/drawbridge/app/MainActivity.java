@@ -63,9 +63,19 @@ public class MainActivity extends Activity {
     private void toggleOverlay(){board.overlayMode=!board.overlayMode;topBar.setVisibility(board.overlayMode?View.GONE:View.VISIBLE);toolScroll.setVisibility(board.overlayMode?View.GONE:View.VISIBLE);rootLayout.setBackgroundColor(board.overlayMode?Color.TRANSPARENT:Color.rgb(246,247,249));board.setBackgroundColor(board.overlayMode?Color.TRANSPARENT:Color.WHITE);board.invalidate();}
     private String base(){ return serverField.getText().toString().trim().replaceAll("/$",""); }
     private void createRoom(){ io.execute(() -> { try { JSONObject r=post("/api/create",new JSONObject()); runOnUiThread(()->{codeField.setText(r.optString("code"));joinRoom(r.optString("code"));}); } catch(Exception e){showError(e);} }); }
-    private void joinRoom(String code){ if(!code.matches("\\d{6}")){status.setText("코드를 확인하세요");return;} io.execute(() -> { try { JSONObject r=post("/api/join",new JSONObject().put("code",code));clientId=r.getString("id");roomCode=code;connectSocket(); } catch(Exception e){showError(e);} }); }
+    private void joinRoom(String code){
+        if(!code.matches("\\d{6}")){status.setText("코드를 확인하세요");return;}
+        io.execute(() -> {
+            Exception last=null;
+            for(int attempt=1;attempt<=10;attempt++){
+                try{JSONObject r=post("/api/join",new JSONObject().put("code",code));clientId=r.getString("id");roomCode=code;connectSocket();return;}
+                catch(Exception e){last=e;if(attempt<10){int current=attempt;runOnUiThread(()->status.setText("외부 주소 연결 대기 중 · "+current+"/10"));try{Thread.sleep(1500);}catch(InterruptedException interrupted){Thread.currentThread().interrupt();return;}}}
+            }
+            showError(last);
+        });
+    }
     private JSONObject post(String path, JSONObject body) throws Exception {
-        HttpURLConnection c=(HttpURLConnection)new URL(base()+path).openConnection();c.setRequestMethod("POST");c.setRequestProperty("Content-Type","application/json");c.setDoOutput(true);try(OutputStream out=c.getOutputStream()){out.write(body.toString().getBytes(StandardCharsets.UTF_8));}
+        HttpURLConnection c=(HttpURLConnection)new URL(base()+path).openConnection();c.setConnectTimeout(6000);c.setReadTimeout(8000);c.setRequestMethod("POST");c.setRequestProperty("Content-Type","application/json");c.setDoOutput(true);try(OutputStream out=c.getOutputStream()){out.write(body.toString().getBytes(StandardCharsets.UTF_8));}
         InputStream in=c.getResponseCode()<400?c.getInputStream():c.getErrorStream();String text=new String(in.readAllBytes(),StandardCharsets.UTF_8);JSONObject result=new JSONObject(text);if(c.getResponseCode()>=400)throw new IOException(result.optString("error","연결 실패"));return result;
     }
     private void connectSocket() throws Exception {
@@ -76,7 +86,7 @@ public class MainActivity extends Activity {
             @Override public void onDisconnected(WebSocket w,WebSocketFrame s,WebSocketFrame c,boolean server){runOnUiThread(()->status.setText("연결 끊김"));}
         });socket.connect();board.sender=json->{if(socket!=null&&socket.isOpen())socket.sendText(json);};
     }
-    private void showError(Exception e){runOnUiThread(()->status.setText(e.getMessage()));}
+    private void showError(Exception e){runOnUiThread(()->status.setText("연결 실패: "+(e==null?"알 수 없는 오류":e.getClass().getSimpleName()+" · "+e.getMessage())));}
     private void sendEvent(JSONObject value){if(socket!=null&&socket.isOpen())socket.sendText(value.toString());}
     private void sendSimple(String type){try{sendEvent(new JSONObject().put("type",type));}catch(Exception ignored){}}
     private void undo(){try{sendEvent(new JSONObject().put("type","undo").put("layer",board.activeLayer));status.setText(board.activeLayer.equals("screen")?"화면 주석 되돌림":"보드 필기 되돌림");}catch(Exception ignored){}}

@@ -4,6 +4,13 @@ set -u
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 PASS=0
 FAIL=0
+SERVER_PID=""
+TUNNEL_PID=""
+cleanup() {
+  [ -z "$TUNNEL_PID" ] || kill "$TUNNEL_PID" >/dev/null 2>&1 || true
+  [ -z "$SERVER_PID" ] || kill "$SERVER_PID" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT INT TERM
 
 ok() { echo "✓ $1"; PASS=$((PASS + 1)); }
 bad() { echo "✗ $1"; FAIL=$((FAIL + 1)); }
@@ -34,8 +41,6 @@ if command -v node >/dev/null 2>&1 && [ -f "$ROOT/server.js" ]; then
   else
     bad "내장 서버를 localhost에서 실행할 수 없습니다."
   fi
-  kill "$SERVER_PID" >/dev/null 2>&1 || true
-  wait "$SERVER_PID" >/dev/null 2>&1 || true
 fi
 
 for HOST in api.trycloudflare.com region1.v2.argotunnel.com region2.v2.argotunnel.com; do
@@ -45,6 +50,7 @@ for HOST in api.trycloudflare.com region1.v2.argotunnel.com region2.v2.argotunne
     bad "DNS 차단 또는 조회 실패: $HOST"
   fi
 done
+
 if dscacheutil -q host -a name h2.cftunnel.com 2>/dev/null | grep -q 'ip_address:'; then
   ok "DNS: h2.cftunnel.com"
 else
@@ -67,6 +73,46 @@ for HOST in region1.v2.argotunnel.com region2.v2.argotunnel.com; do
     bad "TCP 7844 차단 또는 시간 초과: $HOST"
   fi
 done
+
+if [ "$TCP_OK" -eq 1 ] && [ -n "$SERVER_PID" ] && command -v cloudflared >/dev/null 2>&1; then
+  TUNNEL_LOG="${TMPDIR:-/tmp}/drawbridge-diagnose-tunnel.log"
+  : >"$TUNNEL_LOG"
+  cloudflared tunnel --protocol http2 --url "http://127.0.0.1:$TEST_PORT" --no-autoupdate >"$TUNNEL_LOG" 2>&1 &
+  TUNNEL_PID=$!
+  PUBLIC_URL=""
+  ATTEMPT=0
+  while [ "$ATTEMPT" -lt 30 ]; do
+    PUBLIC_URL=$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' "$TUNNEL_LOG" 2>/dev/null | head -1 || true)
+    if [ -n "$PUBLIC_URL" ] && grep -q 'Registered tunnel connection' "$TUNNEL_LOG" 2>/dev/null; then
+      break
+    fi
+    kill -0 "$TUNNEL_PID" >/dev/null 2>&1 || break
+    sleep 1
+    ATTEMPT=$((ATTEMPT + 1))
+  done
+  if [ -n "$PUBLIC_URL" ] && grep -q 'Registered tunnel connection' "$TUNNEL_LOG" 2>/dev/null; then
+    PUBLIC_CODE="000"
+    CURL_ERROR="${TMPDIR:-/tmp}/drawbridge-diagnose-curl.log"
+    : >"$CURL_ERROR"
+    ATTEMPT=0
+    while [ "$ATTEMPT" -lt 60 ] && [ "$PUBLIC_CODE" != "200" ]; do
+      PUBLIC_CODE=$(curl --connect-timeout 4 --max-time 6 -sS -o /dev/null -w '%{http_code}' "$PUBLIC_URL/api/network" 2>"$CURL_ERROR" || true)
+      [ "$PUBLIC_CODE" = "200" ] || sleep 1
+      ATTEMPT=$((ATTEMPT + 1))
+    done
+    if [ "$PUBLIC_CODE" = "200" ]; then
+      ok "실제 외부 터널 왕복: $PUBLIC_URL"
+    else
+      bad "외부 URL은 발급됐지만 접속 실패: HTTP ${PUBLIC_CODE:-000}"
+      sed 's/^/  /' "$CURL_ERROR" 2>/dev/null
+      echo "  로그: $TUNNEL_LOG"
+    fi
+  else
+    bad "실제 Quick Tunnel 주소를 30초 안에 발급받지 못했습니다."
+    echo "  로그: $TUNNEL_LOG"
+    tail -8 "$TUNNEL_LOG" 2>/dev/null | sed 's/^/  /'
+  fi
+fi
 
 echo
 echo "결과: 성공 $PASS / 실패 $FAIL"

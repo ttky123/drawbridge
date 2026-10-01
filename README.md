@@ -45,7 +45,7 @@ Mac 앱의 **연결 설정**에서 연결 방식을 한 번에 선택합니다. 
 ./scripts/diagnose-network.sh
 ```
 
-스크립트는 Node.js와 cloudflared 설치 여부, Cloudflare 도메인 DNS, TryCloudflare HTTPS 443, 터널 HTTP/2용 TCP 7844를 각각 확인합니다. TCP 7844가 모두 차단된 경우 Quick Tunnel은 사용할 수 없으므로 일반 HTTPS 443 공용 중계 서버가 필요합니다.
+스크립트는 Node.js와 cloudflared 설치 여부, Cloudflare 도메인 DNS, TryCloudflare HTTPS 443, 터널 HTTP/2용 TCP 7844를 확인한 뒤 실제 임시 주소를 만들고 공개 인터넷에서 내장 서버까지 왕복합니다. 마지막 `실제 외부 터널 왕복`까지 통과해야 Android가 연결될 수 있습니다. 새 임시 호스트의 DNS 전파에는 시간이 걸릴 수 있어 진단은 최대 약 1분 더 기다립니다. TCP 7844가 모두 차단되거나 임시 호스트가 계속 조회되지 않으면 Quick Tunnel 대신 고정 HTTPS 443 공용 중계 서버가 필요합니다.
 
 Mac 화면은 연결 기능과 필기 기능을 두 줄로 분리했습니다. 위쪽에는 연결 설정·초대·화면 공유와 현재 상태만 표시하고, 아래쪽에는 되돌리기·필기 도구·색상·굵기·확대만 둡니다. 이미지, 화면 위 필기, PNG/JPG, PDF 기능은 **더보기** 메뉴에 있습니다. Android도 서버 주소와 코드를 **연결 설정** 모달로 옮기고 필기 도구·색상·굵기·파일 작업을 짧은 선택 메뉴로 묶었습니다.
 
